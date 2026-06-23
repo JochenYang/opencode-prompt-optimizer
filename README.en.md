@@ -149,6 +149,49 @@ Pass options to the plugin in `tui.json` (the second item in the array is the op
 >
 > Even if the variant isn't registered on your current provider, no error is thrown — it silently falls back to system-prompt mode (the plugin has built-in stripping of `<think>` blocks as a safety net).
 
+### Modes (v0.2.0+)
+
+The plugin supports two modes via the `mode` option:
+
+| Mode        | Use case                                       | Output                                          | Reads project files |
+| ----------- | ---------------------------------------------- | ----------------------------------------------- | ------------------- |
+| `spec`        | Greenfield plans (PM-style)                    | Generic execution spec                          | ❌                  |
+| `enhance`     | In-project feedback / fixes                    | Executable prompt with `path:line` references   | ✅                  |
+
+`mode: "auto"` (the **default**) infers from the input + whether CWD has a `package.json`:
+
+- Input contains `fix/refactor/optimize/error/bug` or `path/to/file.ts:line` → force `enhance`
+- CWD has `package.json` + input contains `build/develop/add/implement` → `enhance`
+- Input is `blog/article/email/copy` (non-engineering) → `spec`
+- Otherwise → `spec`
+
+Lock the mode (in `tui.json`):
+
+```jsonc
+{ "plugin": [["opencode-prompt-optimizer", { "mode": "enhance" }]] }
+{ "plugin": [["opencode-prompt-optimizer", { "mode": "spec"    }]] }
+{ "plugin": [["opencode-prompt-optimizer", { "mode": "auto"    }]] }  // default
+```
+
+**`enhance` mode context** (when `includeContext: true`):
+
+- Reads `package.json` (truncated to 1KB — stack detection)
+- Reads strong AI-tool rule docs, merged under a 2KB budget, by priority:
+  - `AGENTS.md` (opencode)
+  - `CLAUDE.md` (Claude Code)
+  - `GEMINI.md` (Gemini CLI)
+  - `.cursorrules` / `.cursor/rules/*.md` (Cursor)
+  - `.windsurfrules` (Windsurf)
+  - `CONVENTIONS.md` / `INSTRUCTIONS.md` (generic)
+  - `.github/copilot-instructions.md` (GitHub Copilot)
+  - `.continue/rules/*.md` (Continue.dev)
+- Each block prefixed with `[from: filename]`
+- Failures / missing files / single-file projects → silent fallback to `spec`
+
+**Privacy**: the plugin only reads the fixed files listed above — **no recursive project scan**. To disable project reads entirely, set `"includeContext": false` (`enhance` mode still works, just without project context).
+
+**DRAFT philosophy**: `enhance` output starts with `[DRAFT]`; the toast reminds you to "review before sending". This is a pattern validated by Augment Code — **a prompt enhancer is a draft generator, not an oracle**. Multi-turn refinement is still required; the plugin does not replace it.
+
 ### Options
 
 | Option           | Type                       | Default     | Description                                                                                                            |
@@ -156,6 +199,8 @@ Pass options to the plugin in `tui.json` (the second item in the array is the op
 | `language`       | `"auto"\|"en"\|"zh"`        | `"auto"`    | UI + LLM output language. `"auto"` auto-detects from input (CJK → zh, otherwise → en).                                  |
 | `overrideModel`  | `{ providerID, modelID }`  | (inherit)   | Force a specific model. **By default inherits from the primary agent's model** — no config needed.                     |
 | `variant`        | `string`                   | (none)      | Model variant name (e.g. `"none"` to disable thinking). Provider-specific — silently ignored if the provider doesn't register that name; the plugin still works via its system-prompt fallback. |
+| `mode`           | `"auto"\|"spec"\|"enhance"`| `"auto"`    | Working mode. `"auto"` uses heuristics; other values force-lock (see "Modes" section). |
+| `includeContext` | `boolean`                  | `true`      | Whether `enhance` mode reads project files. Disable for privacy-sensitive scenarios. |
 | `timeoutMs`      | `number`                   | `90000`     | Max wait time per optimization call (milliseconds).                                                                    |
 | `pollIntervalMs` | `number`                   | `800`       | How often to poll the LLM response (milliseconds).                                                                      |
 

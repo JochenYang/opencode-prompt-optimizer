@@ -3,7 +3,7 @@
 # opencode-prompt-optimizer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.4-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)]()
 [![Platform](https://img.shields.io/badge/platform-opencode-blueviolet.svg)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?logo=typescript&logoColor=white)]()
 
@@ -147,6 +147,49 @@ $ rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
 >
 > 即使 variant 在当前 provider 上没注册也不会报错 —— 会静默回退到 system prompt 模式（plugin 已内置「不输出 think 块」的兜底清理）。
 
+### 工作模式（v0.2.0+）
+
+插件支持两种工作模式，通过 `mode` 选项控制：
+
+| 模式        | 适用场景                       | 输出                     | 读项目文件 |
+| ----------- | ------------------------------ | ------------------------ | ---------- |
+| `spec`        | 从 0 到 1 的实现计划（PM 风格） | 通用执行 spec             | ❌         |
+| `enhance`     | 在已有项目里优化反馈           | 含 file:line 引用的可执行 prompt | ✅         |
+
+`mode: "auto"`（**默认**）会基于输入文本 + 当前 CWD 是否有 `package.json` 自动判断：
+
+- 输入含 `修复/重构/优化/报错/bug` 或 `path/to/file.ts:line` 引用 → 强制 `enhance`
+- CWD 有 `package.json` + 输入含 `构建/开发/添加/实现/写个` 等动作词 → `enhance`
+- 输入是 `博客/文章/邮件/文案` 等非工程任务 → `spec`
+- 其他 → `spec`
+
+锁定模式（在 `tui.json`）：
+
+```jsonc
+{ "plugin": [["opencode-prompt-optimizer", { "mode": "enhance" }]] }
+{ "plugin": [["opencode-prompt-optimizer", { "mode": "spec"    }]] }
+{ "plugin": [["opencode-prompt-optimizer", { "mode": "auto"    }]] }  // 默认
+```
+
+**`enhance` 模式的 context 收集**（`includeContext: true` 时）：
+
+- 读 `package.json`（截断 1KB，识别技术栈）
+- 读强 AI 工具规则文件，按以下优先级合并到 2KB 预算：
+  - `AGENTS.md`（opencode）
+  - `CLAUDE.md`（Claude Code）
+  - `GEMINI.md`（Gemini CLI）
+  - `.cursorrules` / `.cursor/rules/*.md`（Cursor）
+  - `.windsurfrules`（Windsurf）
+  - `CONVENTIONS.md` / `INSTRUCTIONS.md`（通用）
+  - `.github/copilot-instructions.md`（GitHub Copilot）
+  - `.continue/rules/*.md`（Continue.dev）
+- 每段前加 `[from: 文件名]` 标记
+- 失败 / 文件不存在 / 单文件项目 → 静默 fallback 到 spec 模式，不报错
+
+**隐私**：plugin 仅读上述固定文件，**不递归扫描项目**。如不想让 plugin 读任何项目文件，加 `"includeContext": false`（`enhance` 模式仍可工作，但无 project context）。
+
+**DRAFT 哲学**：enhance 模式的输出以 `[DRAFT]` 开头，toast 提示「请审阅后再发」。这是 augment code 验证过的产品哲学 —— **prompt enhancer 是 draft generator，不是 oracle**。多次沟通确认是必要的，plugin 不替代。
+
 ### 可选项
 
 | 选项              | 类型            | 默认值      | 说明                                                                       |
@@ -154,6 +197,8 @@ $ rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
 | `language`        | `"auto"\|"en"\|"zh"` | `"auto"`    | UI 文案 + 优化输出语言。`"auto"` 会自动从输入文本检测（中文 → zh，其它 → en）。 |
 | `overrideModel`   | `{ providerID, modelID }` | （继承）    | 强制使用指定模型。**默认继承主 agent 的模型** —— 不用配。                       |
 | `variant`         | `string`        | （无）      | 模型变体名（如 `"none"` 关掉 thinking）。Provider-specific —— 如果当前 provider 没注册这个名字，会被静默忽略，plugin 仍能用（兜底）。 |
+| `mode`            | `"auto"\|"spec"\|"enhance"` | `"auto"`   | 工作模式。`"auto"` 启发式判断；其他值强制锁定（见上文「工作模式」章节）。 |
+| `includeContext`  | `boolean`        | `true`     | `enhance` 模式是否读项目文件。隐私敏感场景可关。 |
 | `timeoutMs`       | `number`        | `90000`     | 每次优化调用的最大等待时间（毫秒）。                                          |
 | `pollIntervalMs`  | `number`        | `800`       | 轮询 LLM 响应的间隔（毫秒）。                                                  |
 
