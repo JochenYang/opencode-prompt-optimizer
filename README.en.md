@@ -203,4 +203,4 @@ The build artifact is loaded directly by OpenCode (see "Local file" install abov
 
 ## License
 
-MIT
+[MIT](./LICENSE)

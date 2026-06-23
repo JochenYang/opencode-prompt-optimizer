@@ -201,4 +201,4 @@ bun run typecheck
 
 ## License
 
-MIT
+[MIT](./LICENSE)
