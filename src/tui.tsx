@@ -230,16 +230,19 @@ async function tryOne(
   timeoutMs: number,
   pollMs: number,
 ): Promise<string> {
-  const createBody = model
-    ? { model: { providerID: model.providerID, id: model.modelID } }
-    : {}
+  const createBody: Record<string, unknown> = {}
+  if (model) {
+    const m: Record<string, unknown> = { id: model.modelID, providerID: model.providerID }
+    if (variant) m.variant = variant
+    createBody.model = m
+  }
   const created = await api.client.session.create(createBody)
   const sessionID = created.data?.id
   if (!sessionID) throw new Error("session.create returned no data")
 
   await api.client.session.prompt({
     sessionID,
-    ...(model ? { model } : {}),
+    ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
     ...(variant ? { variant } : {}),
     system,
     parts: [{ type: "text", text: userText }],

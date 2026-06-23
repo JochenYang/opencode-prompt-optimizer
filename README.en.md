@@ -52,7 +52,7 @@ opencode plugin opencode-prompt-optimizer
 This will:
 
 1. Install the npm package into OpenCode's internal cache
-2. Automatically append `"opencode-prompt-optimizer"` to the `plugin` array in your `tui.json`
+2. Automatically append the plugin entry to the `plugin` array in your `tui.json`
 
 Restart OpenCode and you're good to go.
 
@@ -61,6 +61,18 @@ Restart OpenCode and you're good to go.
 > ```bash
 > opencode plugin opencode-prompt-optimizer --global
 > ```
+
+**Default config auto-injected**: The package's `package.json` declares `{"variant": "none"}` as the default config (works on providers that register a `none` variant, e.g. `MiniMax-M3`). After install, your `tui.json` will look like:
+
+```jsonc
+{
+  "plugin": [
+    ["opencode-prompt-optimizer", { "variant": "none" }]
+  ]
+}
+```
+
+If you don't want the variant, just remove the options object from `tui.json` (the plugin still works via its system-prompt fallback).
 
 ### Local file (development)
 
@@ -122,13 +134,28 @@ Pass options to the plugin in `tui.json` (the second item in the array is the op
 }
 ```
 
+> To make the plugin call the LLM with **thinking disabled** (faster response) — add `"variant": "none"` to the options (works on providers that register a `none` variant, e.g. `MiniMax-M3`):
+>
+> ```jsonc
+> {
+>   "plugin": [
+>     [
+>       "opencode-prompt-optimizer",
+>       { "variant": "none" }
+>     ]
+>   ]
+> }
+> ```
+>
+> Even if the variant isn't registered on your current provider, no error is thrown — it silently falls back to system-prompt mode (the plugin has built-in stripping of `<think>` blocks as a safety net).
+
 ### Options
 
 | Option           | Type                       | Default     | Description                                                                                                            |
 | ---------------- | -------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `language`       | `"auto"\|"en"\|"zh"`        | `"auto"`    | UI + LLM output language. `"auto"` auto-detects from input (CJK → zh, otherwise → en).                                  |
 | `overrideModel`  | `{ providerID, modelID }`  | (inherit)   | Force a specific model. **By default inherits from the primary agent's model** — no config needed.                     |
-| `variant`        | `string`                   | (none)      | Model variant (e.g. `"non-thinking"` for some providers). Provider-specific.                                           |
+| `variant`        | `string`                   | (none)      | Model variant name (e.g. `"none"` to disable thinking). Provider-specific — silently ignored if the provider doesn't register that name; the plugin still works via its system-prompt fallback. |
 | `timeoutMs`      | `number`                   | `90000`     | Max wait time per optimization call (milliseconds).                                                                    |
 | `pollIntervalMs` | `number`                   | `800`       | How often to poll the LLM response (milliseconds).                                                                      |
 

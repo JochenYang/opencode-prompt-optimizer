@@ -3,7 +3,7 @@
 # opencode-prompt-optimizer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.3-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.1.4-blue.svg)]()
 [![Platform](https://img.shields.io/badge/platform-opencode-blueviolet.svg)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?logo=typescript&logoColor=white)]()
 
@@ -50,7 +50,7 @@ opencode plugin opencode-prompt-optimizer
 这会做两件事：
 
 1. 把 npm 包安装到 OpenCode 的内部缓存目录
-2. 自动在你的 `tui.json` 的 `plugin` 数组里追加 `"opencode-prompt-optimizer"`
+2. 自动在你的 `tui.json` 的 `plugin` 数组里追加 plugin 项
 
 重启 OpenCode 即可生效。
 
@@ -59,6 +59,18 @@ opencode plugin opencode-prompt-optimizer
 > ```bash
 > opencode plugin opencode-prompt-optimizer --global
 > ```
+
+**默认配置自动注入**：`package.json` 的 `exports["./tui"].config` 声明了默认 `{"variant": "none"}`（适用于 MiniMax-M3 等支持 `none` variant 的模型）。安装后 `tui.json` 里会自动长成：
+
+```jsonc
+{
+  "plugin": [
+    ["opencode-prompt-optimizer", { "variant": "none" }]
+  ]
+}
+```
+
+如果不想用 `variant`，手动从 tui.json 删掉 options 对象即可（plugin 仍按 system prompt 工作）。
 
 ### 本地文件（开发用）
 
@@ -120,13 +132,28 @@ $ rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
 }
 ```
 
+> 想让 plugin 调 LLM 时**关掉 thinking**（速度提升）—— 在 options 里加 `"variant": "none"`（适用于内置注册了 `none` variant 的模型，比如 `MiniMax-M3`）：
+>
+> ```jsonc
+> {
+>   "plugin": [
+>     [
+>       "opencode-prompt-optimizer",
+>       { "variant": "none" }
+>     ]
+>   ]
+> }
+> ```
+>
+> 即使 variant 在当前 provider 上没注册也不会报错 —— 会静默回退到 system prompt 模式（plugin 已内置「不输出 think 块」的兜底清理）。
+
 ### 可选项
 
 | 选项              | 类型            | 默认值      | 说明                                                                       |
 | ----------------- | --------------- | ----------- | -------------------------------------------------------------------------- |
 | `language`        | `"auto"\|"en"\|"zh"` | `"auto"`    | UI 文案 + 优化输出语言。`"auto"` 会自动从输入文本检测（中文 → zh，其它 → en）。 |
 | `overrideModel`   | `{ providerID, modelID }` | （继承）    | 强制使用指定模型。**默认继承主 agent 的模型** —— 不用配。                       |
-| `variant`         | `string`        | （无）      | 模型变体（如部分 provider 的 `"non-thinking"`）。Provider-specific。          |
+| `variant`         | `string`        | （无）      | 模型变体名（如 `"none"` 关掉 thinking）。Provider-specific —— 如果当前 provider 没注册这个名字，会被静默忽略，plugin 仍能用（兜底）。 |
 | `timeoutMs`       | `number`        | `90000`     | 每次优化调用的最大等待时间（毫秒）。                                          |
 | `pollIntervalMs`  | `number`        | `800`       | 轮询 LLM 响应的间隔（毫秒）。                                                  |
 
