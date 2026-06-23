@@ -68,7 +68,6 @@ Reference a local path or built dist directly in `tui.json`:
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/tui.json",
   "plugin": [
     "./plugins/prompt-optimizer.tsx",   // source (bun auto-loads)
     // or

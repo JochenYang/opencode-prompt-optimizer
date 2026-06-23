@@ -66,7 +66,6 @@ opencode plugin opencode-prompt-optimizer
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/tui.json",
   "plugin": [
     "./plugins/prompt-optimizer.tsx",   // 源码（自动 bun 加载）
     // 或
