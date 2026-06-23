@@ -1,26 +1,13 @@
 /** @jsxImportSource @opentui/solid */
-/**
- * Prompt Optimizer TUI Plugin for OpenCode (v0.2.0)
- *
- * Two modes:
- *   - spec:    generic task spec (v0.1.x behavior, default for new projects)
- *   - enhance: project-aware engineering prompt (default when CWD has a project)
- *
- * NOTE on TSX parsing: avoid `[{` (array-of-object) and `: {` (nested object)
- * in inline expressions — the TSX parser misreads the inner `{` as a JSX
- * fragment start. Always build nested objects in named consts first.
- */
-
 import { createSignal, Show } from "solid-js"
 import { existsSync, readFileSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin/tui"
 
 type ModelSpec = { providerID: string; modelID: string }
 type Language = "en" | "zh"
 type LanguageSetting = Language | "auto"
-type Mode = "spec" | "enhance"
-type ModeSetting = Mode | "auto"
 
 type PluginOptions = {
   overrideModel?: ModelSpec
@@ -28,13 +15,13 @@ type PluginOptions = {
   language?: LanguageSetting
   timeoutMs?: number
   pollIntervalMs?: number
-  mode?: ModeSetting
   includeContext?: boolean
 }
 
 const DEFAULT_TIMEOUT = 90_000
 const DEFAULT_POLL = 800
 const IDLE_ICON = "✧"
+const CONTEXT_TTL_MS = 5 * 60 * 1000
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -44,8 +31,7 @@ const LANG: Record<Language, { hint: string }> = {
 }
 
 const TOAST = {
-  successSpec: "Optimized (review before sending)",
-  successEnhance: "Enhanced (draft, review before sending)",
+  success: "Optimized (review before sending)",
   failedTitle: "Optimization failed",
   emptyInput: "Input is empty, nothing to optimize",
 }
@@ -56,7 +42,7 @@ const stripThinkBlocks = (s: string): string =>
   s
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
-    .replace(/<\|begin▁of▁thinking\|>[\s\S]*?<\|end▁of▁thinking\|>/gi, "")
+    .replace(/<\|begin鈻乷f鈻乼hinking\|>[\s\S]*?<\|end鈻乷f鈻乼hinking\|>/gi, "")
     .trim()
 
 const STRONG_DOC_FILES = [
@@ -68,15 +54,7 @@ const STRONG_DOC_FILES = [
   "CONVENTIONS.md",
   "INSTRUCTIONS.md",
   ".github/copilot-instructions.md",
-] as const
-
-function findFirstFile(cwd: string, names: string[]): string | null {
-  for (const name of names) {
-    const p = join(cwd, name)
-    if (existsSync(p) && statSync(p).isFile()) return p
-  }
-  return null
-}
+]
 
 function readTextSafe(path: string, maxBytes: number): string | null {
   try {
@@ -91,11 +69,40 @@ function readTextSafe(path: string, maxBytes: number): string | null {
   }
 }
 
+function readGitStatus(cwd: string): { branch: string; modifiedFiles: string[] } | null {
+  try {
+    const branch = execFileSync(
+      "git",
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      { cwd, encoding: "utf-8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] },
+    ).trim()
+
+    const statusOut = execFileSync(
+      "git",
+      ["status", "--porcelain"],
+      { cwd, encoding: "utf-8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] },
+    )
+
+    const modifiedFiles: string[] = []
+    for (const line of statusOut.split(/\r?\n/)) {
+      if (!line) continue
+      const path = line.slice(3).trim().split(" -> ").pop() ?? ""
+      if (path && !path.startsWith("node_modules/")) modifiedFiles.push(path)
+      if (modifiedFiles.length >= 12) break
+    }
+
+    return { branch, modifiedFiles }
+  } catch {
+    return null
+  }
+}
+
 type ProjectContext = {
   name: string
   description: string
   stack: string
   docs: string
+  git: string
 }
 
 function gatherProjectContext(cwd: string): ProjectContext | null {
@@ -133,76 +140,47 @@ function gatherProjectContext(cwd: string): ProjectContext | null {
     }
   }
 
-  for (const sub of [".cursor/rules", ".continue/rules"]) {
-    if (budget <= 0) break
-    const dir = join(cwd, sub)
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) continue
-    const found = findFirstFile(dir, ["AGENTS.md", "CLAUDE.md"])
-    if (!found) continue
-    const content = readTextSafe(found, Math.min(budget, 512))
-    if (content) {
-      const base = sub + "/" + found.split(/[\\/]/).pop()
-      const header = "[from: " + base + "]\n"
-      docs += "\n" + header + content + "\n"
-      budget -= content.length + header.length
+  let git = ""
+  const gitInfo = readGitStatus(cwd)
+  if (gitInfo) {
+    git = "\n[GIT STATE]\n"
+    git += "- Branch: " + gitInfo.branch + "\n"
+    if (gitInfo.modifiedFiles.length > 0) {
+      git += "- Modified:\n"
+      for (const f of gitInfo.modifiedFiles) {
+        git += "  - " + f + "\n"
+      }
     }
   }
 
-  return { name, description, stack, docs: docs.trim() }
+  return { name, description, stack, docs: docs.trim(), git: git.trim() }
 }
 
-const ENHANCE_RE_LIST: RegExp[] = [
-  /\b(修复|重构|优化|报错|崩溃|异常|失败|慢|卡|闪退|性能|故障|bug|fix|crash|error|slow|leak|optimize|refactor|regression|broken|debug|trace)\b/i,
-  /[\w/\\.-]+\.[a-z][a-z]?[a-z]?[a-z]?:\d\d?\d?\d?/,
-  /\b(函数|类|方法|组件|module|function|class|method|component|file|文件|模块|api|endpoint|路由|route)\b/i,
-]
-const SPEC_RE_LIST: RegExp[] = [
-  /\b(博客|文章|邮件|文案|写给|推广|投稿|诗|故事|小说|blog|article|essay|poem|story|newsletter)\b/i,
-]
-const VAGUE_ACTION_RE =
-  /\b(构建|开发|添加|实现|新增|做一个|写个|创建|搞个|来一个|做个|加个|建一个|建个|build|develop|add|create|implement|new)\b/i
+const contextCache = new Map<string, { at: number; ctx: ProjectContext | null }>()
 
-function detectMode(input: string, projectExists: boolean): Mode {
-  for (const re of ENHANCE_RE_LIST) if (re.test(input)) return "enhance"
-  for (const re of SPEC_RE_LIST) if (re.test(input)) return "spec"
-  if (projectExists && VAGUE_ACTION_RE.test(input)) return "enhance"
-  return "spec"
+function getCachedContext(cwd: string): ProjectContext | null {
+  const hit = contextCache.get(cwd)
+  if (hit && Date.now() - hit.at < CONTEXT_TTL_MS) return hit.ctx
+  const ctx = gatherProjectContext(cwd)
+  contextCache.set(cwd, { at: Date.now(), ctx })
+  return ctx
 }
 
-const SPEC_SYSTEM_PROMPT = (lang: Language): string =>
-  "You are a senior PM + full-stack engineer. Expand the user's brief request into a concise, directly-executable task spec.\n\n" +
-  "Principles:\n" +
-  "1. Convert statement to imperative (\"I want X\" -> \"Please help me build X\")\n" +
-  "2. Specify the sub-type\n" +
-  "3. Add 3-5 KEY industry-standard elements (NOT all possible - be concise)\n" +
-  "4. Add brief non-functional requirements\n" +
-  "5. One-line style/UX requirement\n" +
-  "6. Format: natural language + short list, no Markdown headings\n" +
-  "7. Hard length limit: 300 words max\n" +
-  "8. Keep user's original intent; do not invent roles\n" +
-  "9. Fill missing info with sensible defaults; do not ask back\n" +
-  "10. " + LANG[lang].hint + "\n\n" +
-  "Template:\n" +
-  "\"Please help me build [specific type] of [product]. It should include: [element 1], [element 2].... Non-functional: [brief]. Style: [brief].\"\n\n" +
-  "Forbidden:\n" +
-  "- \"## Task / ## Goal\" sections (that's plan mode, not prompt optimization)\n" +
-  "- \"Please provide more info\" reverse questions\n" +
-  "- \"You are XX\" role assignments\n" +
-  "- Enumerating every possible element (3-5 is enough)\n\n" +
-  "Output the spec text only."
-
-function buildEnhanceSystem(lang: Language, project: ProjectContext | null, userInput: string): string {
-  const ws = project
-    ? "[WORKSPACE]\n" +
-      "- Project: " + project.name + (project.description ? " - " + project.description : "") + "\n" +
-      "- Stack: " + (project.stack || "(unknown)") + "\n" +
-      "- CWD: " + process.cwd() + "\n" +
-      (project.docs ? "\n[PROJECT CONVENTIONS]\n" + project.docs + "\n" : "")
+function buildSystem(lang: Language, project: ProjectContext | null, userInput: string): string {
+  const ctx = project
+    ? [
+        "[WORKSPACE]",
+        "- Project: " + project.name + (project.description ? " - " + project.description : ""),
+        "- Stack: " + (project.stack || "(unknown)"),
+        "- CWD: " + process.cwd(),
+        project.docs ? "\n[PROJECT CONVENTIONS]\n" + project.docs : "",
+        project.git ? "\n" + project.git : "",
+      ].join("\n")
     : "[WORKSPACE: no project context (no package.json in cwd)]"
 
   return (
-    "You are a project-aware prompt enhancer. Output is a DRAFT that the user will review and edit before sending to the main agent.\n\n" +
-    ws + "\n\n" +
+    "You are a project-aware prompt rewriter. Output is a DRAFT that the user will review and edit before sending to the main agent.\n\n" +
+    ctx + "\n\n" +
     "[USER REQUEST]\n" + userInput + "\n\n" +
     "[YOUR JOB]\n" +
     "Rewrite the user's rough request into a clear, directly-executable engineering prompt that:\n" +
@@ -218,25 +196,18 @@ function buildEnhanceSystem(lang: Language, project: ProjectContext | null, user
   )
 }
 
-function buildSystem(lang: Language, mode: Mode, project: ProjectContext | null, userInput: string): string {
-  if (mode === "spec") return SPEC_SYSTEM_PROMPT(lang)
-  return buildEnhanceSystem(lang, project, userInput)
-}
-
 const tui: TuiPlugin = async (api: TuiPluginApi, options?: PluginOptions) => {
   const languageSetting: LanguageSetting = options?.language ?? "auto"
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT
   const pollMs = options?.pollIntervalMs ?? DEFAULT_POLL
   const variant = options?.variant
   const overrideModel = options?.overrideModel
-  const modeSetting: ModeSetting = options?.mode ?? "auto"
   const includeContext = options?.includeContext ?? true
 
   console.error("[prompt-optimizer] plugin loaded", {
     language: languageSetting,
     model: overrideModel ?? "(inherit)",
     variant: variant ?? "(none)",
-    mode: modeSetting,
     includeContext,
   })
 
@@ -255,20 +226,14 @@ const tui: TuiPlugin = async (api: TuiPluginApi, options?: PluginOptions) => {
     setBusy(true)
     try {
       const language: Language = languageSetting === "auto" ? detectLanguage(raw) : languageSetting
-
-      const project = includeContext ? gatherProjectContext(process.cwd()) : null
-      const projectExists = project !== null
-      const mode: Mode = modeSetting === "auto" ? detectMode(raw, projectExists) : modeSetting
-
-      const system = buildSystem(language, mode, project, raw)
-      const userText = mode === "enhance"
-        ? raw
-        : raw + "\n\n（请直接输出优化后的 prompt, 不要任何解释、标记或格式说明）"
+      const project = includeContext ? getCachedContext(process.cwd()) : null
+      const system = buildSystem(language, project, raw)
+      const userText = raw + "\n\n（请直接输出优化后的 prompt, 不要任何解释、标记或格式说明）"
 
       console.error("[prompt-optimizer] run", {
-        mode,
-        projectExists,
+        projectExists: project !== null,
         docsBytes: project?.docs.length ?? 0,
+        gitBytes: project?.git.length ?? 0,
       })
 
       const result = await tryOne(api, overrideModel, variant, system, userText, timeoutMs, pollMs)
@@ -279,10 +244,7 @@ const tui: TuiPlugin = async (api: TuiPluginApi, options?: PluginOptions) => {
         parts: [resultPart],
       })
       ref.focus()
-      api.ui.toast({
-        variant: "success",
-        message: mode === "enhance" ? TOAST.successEnhance : TOAST.successSpec,
-      })
+      api.ui.toast({ variant: "success", message: TOAST.success })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error("[prompt-optimizer] enhance failed:", msg)
@@ -391,7 +353,6 @@ async function tryOne(
   const sessionID = created.data?.id
   if (!sessionID) throw new Error("session.create returned no data")
 
-  // Build prompt body without inline `[{...}]` to avoid TSX parser confusion.
   const userPart: Record<string, unknown> = { type: "text", text: userText }
   const promptBody: Record<string, unknown> = {
     sessionID,
