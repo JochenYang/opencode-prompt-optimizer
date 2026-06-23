@@ -3,271 +3,144 @@
 # opencode-prompt-optimizer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)]()
 [![Platform](https://img.shields.io/badge/platform-opencode-blueviolet.svg)]()
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?logo=typescript&logoColor=white)]()
 
 **[English](./README.en.md) | 中文**
 
-一个 OpenCode TUI 插件，在输入框旁边加一个 **✦ 一键优化按钮**。点一下，你随手写的需求就被扩写成 LLM 能直接执行的完整任务说明。
+OpenCode TUI 插件。点击输入框旁的 **✦** 按钮，把随手写的需求扩写成 LLM 能直接执行的工程任务。
 
 </div>
 
 ---
 
-## 效果对比
+## 效果
 
 你在输入框写：
 
 ```
-我想开发一个徒步落地页
+我想增加一个会话区 chat 框下面有 statusbar，显示当前模型和上下文占用
 ```
 
-点击 ✦ 之后，输入框被替换成：
+点击 ✦ 后，输入框被替换为：
 
 ```
-请帮我开发一个徒步旅行活动的落地页面（landing page）。该落地页需要包含以下内容：
+[DRAFT] 基于现有前端栈（请先用 Read 工具查看侧边栏组件、会话区组件目录结构，
+定位 Sidebar、ChatInput/MessageInput 等关键文件路径），按以下顺序交付：
 
-【核心模块】活动信息展示区（时间/地点/难度/费用）、装备清单、报名表单、相册、FAQ
-【设计风格】户外自然风，主色调森林绿 + 暖橙，强调图片沉浸感
-【响应式】桌面端 + 移动端自适应
-【技术栈】单页 HTML + Tailwind CSS（无需框架），可直接双击打开
-【可交付】含中文文案、可替换的图片占位符、README 简要说明
+1. 侧边栏插件导览
+- 在 Sidebar 新增"插件"入口分组，从本地清单 plugins/manifest.json 读取可用
+插件列表，渲染为可点击项。
+- 点击触发 Modal/Drawer 弹出安装确认窗口，展示插件名、版本、描述、权限/依赖，
+确认后调用 installPlugin 流程（写入已安装列表 + 持久化），并更新 UI 状态。
+- 错误处理：清单加载失败、依赖缺失、用户取消分别走 toast/错误态。
+
+2. 公共要求
+- 严格遵循现有 TS/组件风格（无 any、props 显式类型），复用既有 design tokens。
+- 错误以 actionable message 抛出，敏感信息不入日志。
+- 为新增逻辑补充最小单元测试（StatusBar 渲染、install 流程成功/失败分支、清单解析）。
+- 完成后运行项目 lint/typecheck/test，记录结果交付说明。
+
+执行顺序：先定位文件 > 设计稿（控件/数据流）> Sidebar 入口与 Modal > StatusBar >
+测试与验证。中间若需架构决策先暂停确认。
 ```
 
-直接可执行 —— Agent 拿到就能开干。
+输出以 `[DRAFT]` 开头，自动引用了当前项目的真实文件（`Sidebar`、`ChatInput`、`plugins/manifest.json`），用户可以编辑后再发。
 
 ---
 
 ## 安装
 
-### 从 npm 安装（推荐）
+### 从 npm（推荐）
 
 ```bash
 opencode plugin opencode-prompt-optimizer
 ```
 
-这会做两件事：
+需要全局装的话加 `--global`：
 
-1. 把 npm 包安装到 OpenCode 的内部缓存目录
-2. 自动在你的 `tui.json` 的 `plugin` 数组里追加 plugin 项
-
-重启 OpenCode 即可生效。
-
-> 想装到全局（`~/.config/opencode/tui.json`）而不是当前项目，加 `--global`：
->
-> ```bash
-> opencode plugin opencode-prompt-optimizer --global
-> ```
-
-**默认配置自动注入**：`package.json` 的 `exports["./tui"].config` 声明了默认 `{"variant": "none"}`（适用于 MiniMax-M3 等支持 `none` variant 的模型）。安装后 `tui.json` 里会自动长成：
-
-```jsonc
-{
-  "plugin": [
-    ["opencode-prompt-optimizer", { "variant": "none" }]
-  ]
-}
+```bash
+opencode plugin opencode-prompt-optimizer --global
 ```
 
-如果不想用 `variant`，手动从 tui.json 删掉 options 对象即可（plugin 仍按 system prompt 工作）。
+重启 OpenCode 生效。
 
 ### 本地文件（开发用）
 
-在 `tui.json` 里直接引用本地路径或 dist：
+在 `tui.json` 直接引用：
 
 ```jsonc
 {
   "plugin": [
-    "./plugins/prompt-optimizer.tsx",   // 源码（自动 bun 加载）
-    // 或
-    "./plugins/prompt-optimizer.js"    // 构建产物
+    "./plugins/prompt-optimizer.tsx"
   ]
 }
 ```
 
+构建产物 `dist/tui.js` 也可以直接引用。
+
 ### 卸载
 
-> ⚠️ opencode CLI **目前不提供** `plugin remove` / `plugin uninstall` 子命令。需要手卸载：
-
-**1. 从 tui.json 删 plugin 项**：
-
-```bash
-# 全局安装
-$ notepad ~/.config/opencode/tui.json
-# 项目级安装
-$ notepad <project>/.opencode/tui.json
-```
-
-把 `"plugin": ["opencode-prompt-optimizer", ...]` 里的 `"opencode-prompt-optimizer"` 删掉。
-
-**2. 删 cache 目录**：
-
-```bash
-# Windows
-$ Remove-Item -Recurse "$env:USERPROFILE\.cache\opencode\packages\opencode-prompt-optimizer*"
-# Linux/macOS
-$ rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
-```
-
-**3. 重启 opencode 生效**。
+1. 从 `tui.json` 的 `plugin` 数组删掉本插件项
+2. 删 cache 目录：
+   ```bash
+   # Windows
+   Remove-Item -Recurse "$env:USERPROFILE\.cache\opencode\packages\opencode-prompt-optimizer*"
+   # Linux/macOS
+   rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
+   ```
+3. 重启 OpenCode
 
 ---
 
 ## 配置
 
-在 `tui.json` 里给插件传选项（数组的第二项是 options）：
+在 `tui.json` 的 plugin 元组第二项传 options：
 
 ```jsonc
 {
   "plugin": [
     [
       "opencode-prompt-optimizer",
-      {
-        "language": "auto",
-        "timeoutMs": 90000
-      }
+      { "variant": "none" }
     ]
   ]
 }
 ```
 
-> 想让 plugin 调 LLM 时**关掉 thinking**（速度提升）—— 在 options 里加 `"variant": "none"`（适用于内置注册了 `none` variant 的模型，比如 `MiniMax-M3`）：
->
-> ```jsonc
-> {
->   "plugin": [
->     [
->       "opencode-prompt-optimizer",
->       { "variant": "none" }
->     ]
->   ]
-> }
-> ```
->
-> 即使 variant 在当前 provider 上没注册也不会报错 —— 会静默回退到 system prompt 模式（plugin 已内置「不输出 think 块」的兜底清理）。
-
-### 工作模式（v0.2.0+）
-
-插件支持两种工作模式，通过 `mode` 选项控制：
-
-| 模式        | 适用场景                       | 输出                     | 读项目文件 |
-| ----------- | ------------------------------ | ------------------------ | ---------- |
-| `spec`        | 从 0 到 1 的实现计划（PM 风格） | 通用执行 spec             | ❌         |
-| `enhance`     | 在已有项目里优化反馈           | 含 file:line 引用的可执行 prompt | ✅         |
-
-`mode: "auto"`（**默认**）会基于输入文本 + 当前 CWD 是否有 `package.json` 自动判断：
-
-- 输入含 `修复/重构/优化/报错/bug` 或 `path/to/file.ts:line` 引用 → 强制 `enhance`
-- CWD 有 `package.json` + 输入含 `构建/开发/添加/实现/写个` 等动作词 → `enhance`
-- 输入是 `博客/文章/邮件/文案` 等非工程任务 → `spec`
-- 其他 → `spec`
-
-锁定模式（在 `tui.json`）：
-
-```jsonc
-{ "plugin": [["opencode-prompt-optimizer", { "mode": "enhance" }]] }
-{ "plugin": [["opencode-prompt-optimizer", { "mode": "spec"    }]] }
-{ "plugin": [["opencode-prompt-optimizer", { "mode": "auto"    }]] }  // 默认
-```
-
-**`enhance` 模式的 context 收集**（`includeContext: true` 时）：
-
-- 读 `package.json`（截断 1KB，识别技术栈）
-- 读强 AI 工具规则文件，按以下优先级合并到 2KB 预算：
-  - `AGENTS.md`（opencode）
-  - `CLAUDE.md`（Claude Code）
-  - `GEMINI.md`（Gemini CLI）
-  - `.cursorrules` / `.cursor/rules/*.md`（Cursor）
-  - `.windsurfrules`（Windsurf）
-  - `CONVENTIONS.md` / `INSTRUCTIONS.md`（通用）
-  - `.github/copilot-instructions.md`（GitHub Copilot）
-  - `.continue/rules/*.md`（Continue.dev）
-- 每段前加 `[from: 文件名]` 标记
-- 失败 / 文件不存在 / 单文件项目 → 静默 fallback 到 spec 模式，不报错
-
-**隐私**：plugin 仅读上述固定文件，**不递归扫描项目**。如不想让 plugin 读任何项目文件，加 `"includeContext": false`（`enhance` 模式仍可工作，但无 project context）。
-
-**DRAFT 哲学**：enhance 模式的输出以 `[DRAFT]` 开头，toast 提示「请审阅后再发」。这是 augment code 验证过的产品哲学 —— **prompt enhancer 是 draft generator，不是 oracle**。多次沟通确认是必要的，plugin 不替代。
-
 ### 可选项
 
-| 选项              | 类型            | 默认值      | 说明                                                                       |
-| ----------------- | --------------- | ----------- | -------------------------------------------------------------------------- |
-| `language`        | `"auto"\|"en"\|"zh"` | `"auto"`    | UI 文案 + 优化输出语言。`"auto"` 会自动从输入文本检测（中文 → zh，其它 → en）。 |
-| `overrideModel`   | `{ providerID, modelID }` | （继承）    | 强制使用指定模型。**默认继承主 agent 的模型** —— 不用配。                       |
-| `variant`         | `string`        | （无）      | 模型变体名（如 `"none"` 关掉 thinking）。Provider-specific —— 如果当前 provider 没注册这个名字，会被静默忽略，plugin 仍能用（兜底）。 |
-| `mode`            | `"auto"\|"spec"\|"enhance"` | `"auto"`   | 工作模式。`"auto"` 启发式判断；其他值强制锁定（见上文「工作模式」章节）。 |
-| `includeContext`  | `boolean`        | `true`     | `enhance` 模式是否读项目文件。隐私敏感场景可关。 |
-| `timeoutMs`       | `number`        | `90000`     | 每次优化调用的最大等待时间（毫秒）。                                          |
-| `pollIntervalMs`  | `number`        | `800`       | 轮询 LLM 响应的间隔（毫秒）。                                                  |
+| 选项              | 类型                                | 默认值       | 说明                                                                                                |
+| ----------------- | ----------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
+| `language`        | `"auto"` / `"en"` / `"zh"`             | `"auto"`     | 输出语言。`"auto"` 根据输入文本自动检测（中文 → zh，其它 → en）。                                       |
+| `overrideModel`   | `{ providerID, modelID }`             | （继承）     | 强制使用指定模型。默认继承主 agent 的模型，不用配。                                                          |
+| `variant`         | `string`                              | （无）       | 模型变体名（如 `"none"` 关掉 thinking）。Provider-specific，未注册时静默回退。                                  |
+| `includeContext`  | `boolean`                             | `true`       | 是否读项目文件 + git 状态。关掉后只润色文本，不感知项目。                                                    |
+| `timeoutMs`       | `number`                              | `90000`      | 单次优化最大等待时间（毫秒）。                                                                                |
+| `pollIntervalMs`  | `number`                              | `800`        | 轮询 LLM 响应的间隔（毫秒）。                                                                                |
 
 ---
 
-## 设计理念
+## 项目感知
 
-这个插件**不是** "plan mode" —— 它不会输出 `## Task / ## Goal / ## Input` 这种结构化元提示让 LLM 再去思考一遍。它直接输出**可执行的任务说明**，LLM 拿到就能开干。
+v0.3.0 默认开启项目感知：每次点击 ✦ 自动读取当前项目信息并注入到 system prompt，包括：
 
-具体做了三件事：
+- `package.json` 里的 name / description / dependencies
+- 项目根目录下的 AI 工具规则文件（按优先级合并到 2KB 预算）：`AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.windsurfrules` / `CONVENTIONS.md` / `INSTRUCTIONS.md` / `.github/copilot-instructions.md` / `.continue/rules/*.md`
+- Git 状态：当前分支 + 已修改文件（前 12 个，过滤 `node_modules/`）
 
-1. **陈述句 → 祈使句**："我想开发 X" → "请帮我开发 X"
-2. **明确子类型**：模糊描述 → 具体类型（landing page / API endpoint / CLI tool / ...）
-3. **补 3-5 个关键元素**：核心模块、设计风格、技术栈、响应式、可交付物
-
-输出控制在 **300 字以内**，避免 prompt 膨胀。
-
----
-
-## 工作流程
-
-```
-[用户点击 ✦]
-    ↓
-读取输入框当前文本
-    ↓
-判断语言（CJK 自动检测）→ 切换 system prompt 提示
-    ↓
-用主 agent 的 model 跑一个一次性 session
-    ↓
-轮询 assistant 响应（默认 90s）
-    ↓
-剥掉 <think> / <thinking> 块
-    ↓
-替换输入框文本
-```
-
-**模型来源**：默认**不传** `model` 字段，由主 agent 决定。如果主 agent 配的是 `minimax-国内` 的某个模型，就用那个。
-
----
-
-## 开发
-
-```bash
-# 安装依赖
-bun install
-
-# 构建（输出 dist/tui.js）
-bun run build
-
-# 监听模式（自动重建）
-bun run dev
-
-# 类型检查
-bun run typecheck
-```
-
-构建产物直接给 OpenCode 加载（见上文"本地文件安装"）。
+context 在同一 CWD 5 分钟内复用，不重复扫。**plugin 只读这些固定文件，不递归扫描项目**。想完全关闭项目读取：设 `"includeContext": false`。
 
 ---
 
 ## 故障排查
 
-| 现象                          | 排查                                                                          |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| 点 ✦ 没反应                    | 检查 `tui.json` 的 `plugin` 数组是否包含本插件；`typecheck` 是否有 TS 报错。   |
-| 优化结果是英文（输入是中文）  | 显式设 `"language": "zh"`（`"auto"` 模式检测失败时回退到 en）。                  |
-| 主屏布局换行                   | 在 `tui.json` 顶部加 `"prompt": { "max_width": 80 }` 扩宽输入框。             |
-| 报 "Optimization failed"      | 多半是模型超时或 rate limit。调大 `timeoutMs` 或换 `overrideModel`。            |
+| 现象                          | 排查                                                                              |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| 点 ✦ 没反应                    | 检查 `tui.json` 的 `plugin` 数组是否包含本插件；`typecheck` 是否有 TS 报错。       |
+| 优化结果是英文（输入是中文）  | 显式设 `"language": "zh"`（`"auto"` 检测失败时回退到 en）。                          |
+| 主屏布局换行                   | 在 `tui.json` 顶部加 `"prompt": { "max_width": 80 }` 扩宽输入框。                 |
+| 报 "Optimization failed"      | 多半是模型超时或 rate limit。调大 `timeoutMs` 或换 `overrideModel`。                |
 
 ---
 

@@ -3,41 +3,54 @@
 # opencode-prompt-optimizer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.3-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)]()
 [![Platform](https://img.shields.io/badge/platform-opencode-blueviolet.svg)]()
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?logo=typescript&logoColor=white)]()
 
-**English | [中文](./README.md)**
+**[English] | [中文](./README.md)**
 
-A OpenCode TUI plugin that adds a **✦ one-click optimize button** next to the prompt input. Click it, and your brief request is expanded into a directly-executable task specification the LLM can act on immediately.
+OpenCode TUI plugin. Click the **✦** button next to the input box to expand a brief request into an engineering task the LLM can execute directly.
 
 </div>
 
 ---
 
-## Before / After
+## Demo
 
 You type:
 
 ```
-I want to build a hiking landing page
+Add a status bar under the chat panel showing current model and session context usage.
 ```
 
-After clicking ✦, the input is replaced with:
+Click ✦. The input is replaced with:
 
 ```
-Please build a landing page for a hiking event. The page should include:
+[DRAFT] Based on the existing frontend stack (first use Read to inspect the sidebar
+components and chat panel directory structure, locate Sidebar, ChatInput/MessageInput
+and other key file paths), deliver in this order:
 
-[CORE MODULES] Event info section (date/location/difficulty/cost), gear checklist,
-registration form, photo gallery, FAQ
-[DESIGN STYLE] Outdoor / natural aesthetic, primary color: forest green + warm orange,
-emphasize immersive imagery
-[RESPONSIVE] Desktop + mobile adaptive layout
-[TECH STACK] Single HTML file + Tailwind CSS (no framework), double-click to open
-[DELIVERABLES] Chinese copy, replaceable image placeholders, brief README
+1. Sidebar plugin entry
+- Add a "Plugins" group in the Sidebar, read from local manifest plugins/manifest.json
+and render each item as a clickable row.
+- Click triggers a Modal/Drawer that shows the plugin name, version, description,
+permissions, and dependencies. On confirm, call the installPlugin flow (persist the
+installed list) and update UI state.
+- Error handling: manifest load failure, missing dependency, user cancel each map
+to a distinct toast/error state.
+
+2. Shared requirements
+- Strictly follow existing TS/component style (no any, explicit prop types), reuse
+existing design tokens.
+- Errors are actionable, no sensitive data in logs.
+- Add minimal unit tests (StatusBar render, install flow success/failure, manifest
+parsing).
+- After implementation, run lint/typecheck/test and record results in a delivery note.
+
+Execution order: locate files > design (component/data flow) > Sidebar entry + Modal >
+StatusBar > test + verify. Pause for confirmation on any architecture decision.
 ```
 
-Direct task spec — the agent immediately knows what to build.
+Output starts with `[DRAFT]` and references real files in the current project (`Sidebar`, `ChatInput`, `plugins/manifest.json`). Edit before sending.
 
 ---
 
@@ -49,227 +62,90 @@ Direct task spec — the agent immediately knows what to build.
 opencode plugin opencode-prompt-optimizer
 ```
 
-This will:
+For a global install, add `--global`:
 
-1. Install the npm package into OpenCode's internal cache
-2. Automatically append the plugin entry to the `plugin` array in your `tui.json`
+```bash
+opencode plugin opencode-prompt-optimizer --global
+```
 
-Restart OpenCode and you're good to go.
+Restart OpenCode to take effect.
 
-> To install globally (`~/.config/opencode/tui.json`) instead of the current project, add `--global`:
->
-> ```bash
-> opencode plugin opencode-prompt-optimizer --global
-> ```
+### Local file (for development)
 
-**Default config auto-injected**: The package's `package.json` declares `{"variant": "none"}` as the default config (works on providers that register a `none` variant, e.g. `MiniMax-M3`). After install, your `tui.json` will look like:
+Reference directly in `tui.json`:
 
 ```jsonc
 {
   "plugin": [
-    ["opencode-prompt-optimizer", { "variant": "none" }]
+    "./plugins/prompt-optimizer.tsx"
   ]
 }
 ```
 
-If you don't want the variant, just remove the options object from `tui.json` (the plugin still works via its system-prompt fallback).
-
-### Local file (development)
-
-Reference a local path or built dist directly in `tui.json`:
-
-```jsonc
-{
-  "plugin": [
-    "./plugins/prompt-optimizer.tsx",   // source (bun auto-loads)
-    // or
-    "./plugins/prompt-optimizer.js"    // build artifact
-  ]
-}
-```
+The built artifact `dist/tui.js` can be referenced the same way.
 
 ### Uninstall
 
-> ⚠️ opencode CLI does **not** provide a `plugin remove` / `plugin uninstall` subcommand. Manual steps:
-
-**1. Remove the plugin entry from `tui.json`**:
-
-```bash
-# Global install
-$ notepad ~/.config/opencode/tui.json
-# Project-level install
-$ notepad <project>/.opencode/tui.json
-```
-
-Delete `"opencode-prompt-optimizer"` from the `"plugin"` array.
-
-**2. Delete the cache directory**:
-
-```bash
-# Windows
-$ Remove-Item -Recurse "$env:USERPROFILE\.cache\opencode\packages\opencode-prompt-optimizer*"
-# Linux/macOS
-$ rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
-```
-
-**3. Restart opencode.**
+1. Remove the entry from the `plugin` array in `tui.json`
+2. Delete the cache directory:
+   ```bash
+   # Windows
+   Remove-Item -Recurse "$env:USERPROFILE\.cache\opencode\packages\opencode-prompt-optimizer*"
+   # Linux/macOS
+   rm -rf ~/.cache/opencode/packages/opencode-prompt-optimizer*
+   ```
+3. Restart OpenCode
 
 ---
 
 ## Configuration
 
-Pass options to the plugin in `tui.json` (the second item in the array is the options object):
+Pass options as the second item in the plugin tuple in `tui.json`:
 
 ```jsonc
 {
   "plugin": [
     [
       "opencode-prompt-optimizer",
-      {
-        "language": "auto",
-        "timeoutMs": 90000
-      }
+      { "variant": "none" }
     ]
   ]
 }
 ```
 
-> To make the plugin call the LLM with **thinking disabled** (faster response) — add `"variant": "none"` to the options (works on providers that register a `none` variant, e.g. `MiniMax-M3`):
->
-> ```jsonc
-> {
->   "plugin": [
->     [
->       "opencode-prompt-optimizer",
->       { "variant": "none" }
->     ]
->   ]
-> }
-> ```
->
-> Even if the variant isn't registered on your current provider, no error is thrown — it silently falls back to system-prompt mode (the plugin has built-in stripping of `<think>` blocks as a safety net).
-
-### Modes (v0.2.0+)
-
-The plugin supports two modes via the `mode` option:
-
-| Mode        | Use case                                       | Output                                          | Reads project files |
-| ----------- | ---------------------------------------------- | ----------------------------------------------- | ------------------- |
-| `spec`        | Greenfield plans (PM-style)                    | Generic execution spec                          | ❌                  |
-| `enhance`     | In-project feedback / fixes                    | Executable prompt with `path:line` references   | ✅                  |
-
-`mode: "auto"` (the **default**) infers from the input + whether CWD has a `package.json`:
-
-- Input contains `fix/refactor/optimize/error/bug` or `path/to/file.ts:line` → force `enhance`
-- CWD has `package.json` + input contains `build/develop/add/implement` → `enhance`
-- Input is `blog/article/email/copy` (non-engineering) → `spec`
-- Otherwise → `spec`
-
-Lock the mode (in `tui.json`):
-
-```jsonc
-{ "plugin": [["opencode-prompt-optimizer", { "mode": "enhance" }]] }
-{ "plugin": [["opencode-prompt-optimizer", { "mode": "spec"    }]] }
-{ "plugin": [["opencode-prompt-optimizer", { "mode": "auto"    }]] }  // default
-```
-
-**`enhance` mode context** (when `includeContext: true`):
-
-- Reads `package.json` (truncated to 1KB — stack detection)
-- Reads strong AI-tool rule docs, merged under a 2KB budget, by priority:
-  - `AGENTS.md` (opencode)
-  - `CLAUDE.md` (Claude Code)
-  - `GEMINI.md` (Gemini CLI)
-  - `.cursorrules` / `.cursor/rules/*.md` (Cursor)
-  - `.windsurfrules` (Windsurf)
-  - `CONVENTIONS.md` / `INSTRUCTIONS.md` (generic)
-  - `.github/copilot-instructions.md` (GitHub Copilot)
-  - `.continue/rules/*.md` (Continue.dev)
-- Each block prefixed with `[from: filename]`
-- Failures / missing files / single-file projects → silent fallback to `spec`
-
-**Privacy**: the plugin only reads the fixed files listed above — **no recursive project scan**. To disable project reads entirely, set `"includeContext": false` (`enhance` mode still works, just without project context).
-
-**DRAFT philosophy**: `enhance` output starts with `[DRAFT]`; the toast reminds you to "review before sending". This is a pattern validated by Augment Code — **a prompt enhancer is a draft generator, not an oracle**. Multi-turn refinement is still required; the plugin does not replace it.
-
 ### Options
 
-| Option           | Type                       | Default     | Description                                                                                                            |
-| ---------------- | -------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `language`       | `"auto"\|"en"\|"zh"`        | `"auto"`    | UI + LLM output language. `"auto"` auto-detects from input (CJK → zh, otherwise → en).                                  |
-| `overrideModel`  | `{ providerID, modelID }`  | (inherit)   | Force a specific model. **By default inherits from the primary agent's model** — no config needed.                     |
-| `variant`        | `string`                   | (none)      | Model variant name (e.g. `"none"` to disable thinking). Provider-specific — silently ignored if the provider doesn't register that name; the plugin still works via its system-prompt fallback. |
-| `mode`           | `"auto"\|"spec"\|"enhance"`| `"auto"`    | Working mode. `"auto"` uses heuristics; other values force-lock (see "Modes" section). |
-| `includeContext` | `boolean`                  | `true`      | Whether `enhance` mode reads project files. Disable for privacy-sensitive scenarios. |
-| `timeoutMs`      | `number`                   | `90000`     | Max wait time per optimization call (milliseconds).                                                                    |
-| `pollIntervalMs` | `number`                   | `800`       | How often to poll the LLM response (milliseconds).                                                                      |
+| Option           | Type                              | Default     | Description                                                                                                            |
+| ---------------- | --------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `language`       | `"auto"` / `"en"` / `"zh"`           | `"auto"`    | Output language. `"auto"` auto-detects from input (CJK → zh, otherwise → en).                                              |
+| `overrideModel`  | `{ providerID, modelID }`           | (inherit)   | Force a specific model. Defaults to the primary agent's model — usually no need to set.                                       |
+| `variant`        | `string`                            | (none)      | Model variant name (e.g. `"none"` to disable thinking). Provider-specific; silently ignored if the provider doesn't register it. |
+| `includeContext` | `boolean`                           | `true`      | Whether to read project files + git state. Disable to polish text without project awareness.                                |
+| `timeoutMs`      | `number`                            | `90000`     | Maximum wait time per optimization call (ms).                                                                              |
+| `pollIntervalMs` | `number`                            | `800`       | Interval to poll the LLM response (ms).                                                                                   |
 
 ---
 
-## Design Philosophy
+## Project Awareness
 
-This plugin is **not** a "plan mode" — it does NOT output structured meta-prompts (`## Task / ## Goal / ## Input`) for the LLM to think about again. It directly outputs a **directly-executable task spec** the LLM can act on immediately.
+v0.3.0 enables project awareness by default. Every ✦ click reads the current project and injects it into the system prompt, including:
 
-Three things it does:
+- `package.json` name / description / dependencies
+- AI tool rule docs at the project root (merged under a 2KB budget, by priority): `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.windsurfrules` / `CONVENTIONS.md` / `INSTRUCTIONS.md` / `.github/copilot-instructions.md` / `.continue/rules/*.md`
+- Git state: current branch + modified files (first 12, `node_modules/` filtered)
 
-1. **Statement → imperative**: "I want to build X" → "Please build X"
-2. **Specify sub-type**: vague description → concrete type (landing page / API endpoint / CLI tool / ...)
-3. **Add 3-5 key elements**: core modules, design style, tech stack, responsive, deliverables
-
-Output is capped at **300 words** to avoid prompt bloat.
-
----
-
-## How It Works
-
-```
-[User clicks ✦]
-    ↓
-Read current input text
-    ↓
-Detect language (auto CJK detection) → switch system prompt hint
-    ↓
-Spawn a one-shot session using the primary agent's model
-    ↓
-Poll the assistant response (90s default timeout)
-    ↓
-Strip <think> / <thinking> blocks
-    ↓
-Replace input text
-```
-
-**Model source**: by default, the plugin does **NOT** pass the `model` field — the primary agent decides. If your primary agent is configured with a specific model (e.g. `minimax-国内` / `deepseek-v4-flash-free`), that's what gets used.
-
----
-
-## Development
-
-```bash
-# Install deps
-bun install
-
-# Build (outputs dist/tui.js)
-bun run build
-
-# Watch mode (auto-rebuild)
-bun run dev
-
-# Typecheck
-bun run typecheck
-```
-
-The build artifact is loaded directly by OpenCode (see "Local file" install above).
+Context is cached per CWD for 5 minutes — no re-scan. **The plugin only reads these fixed files; it never recursively scans the project.** To disable project reading entirely, set `"includeContext": false`.
 
 ---
 
 ## Troubleshooting
 
-| Symptom                            | Fix                                                                                              |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
-| ✦ click does nothing               | Check that `tui.json` `plugin` array includes this plugin; run `typecheck` for TS errors.         |
-| Output is English when input is CN | Set `"language": "zh"` explicitly (auto mode falls back to en on detection failure).              |
-| Home page wraps the icon           | Add `"prompt": { "max_width": 80 }` at the top of `tui.json` to widen the prompt.                |
-| "Optimization failed" toast        | Usually timeout or rate limit. Bump `timeoutMs` or switch `overrideModel`.                        |
+| Symptom                              | Fix                                                                                                |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| ✦ click does nothing                  | Check that `tui.json`'s `plugin` array includes this plugin; run `typecheck` for TS errors.            |
+| Output is English when input is CN  | Set `"language": "zh"` explicitly (`"auto"` falls back to en on detection failure).                       |
+| Home page wraps the icon             | Add `"prompt": { "max_width": 80 }` at the top of `tui.json` to widen the input.                          |
+| "Optimization failed" toast          | Usually a model timeout or rate limit. Increase `timeoutMs` or switch `overrideModel`.                  |
 
 ---
 
