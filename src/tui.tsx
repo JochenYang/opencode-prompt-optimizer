@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal, Show } from "solid-js"
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin/tui"
@@ -18,16 +18,16 @@ type PluginOptions = {
   includeContext?: boolean
 }
 
-const DEFAULT_TIMEOUT = 90_000
-const DEFAULT_POLL = 800
-const IDLE_ICON = "✧"
+const DEFAULT_TIMEOUT = 900_000
+const DEFAULT_POLL = 200
+const IDLE_ICON = "\u2727"
 const CONTEXT_TTL_MS = 5 * 60 * 1000
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+const SPINNER_FRAMES = ["\u281B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u280F", "\u280F"]
 
 const LANG: Record<Language, { hint: string }> = {
   en: { hint: "Output the optimized prompt in English. No explanation, no preamble, no think tags." },
-  zh: { hint: "用中文输出优化后的 prompt. 不要任何解释、前缀或 think 标签." },
+  zh: { hint: "\u7528\u4E2D\u6587\u8F93\u51FA\u4F18\u5316\u540E\u7684 prompt. \u4E0D\u8981\u4EFB\u4F55\u89E3\u91CA\u3001\u524D\u7F00\u6216 think \u6807\u7B7E." },
 }
 
 const TOAST = {
@@ -42,7 +42,7 @@ const stripThinkBlocks = (s: string): string =>
   s
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
-    .replace(/<\|begin鈻乷f鈻乼hinking\|>[\s\S]*?<\|end鈻乷f鈻乼hinking\|>/gi, "")
+    .replace(/<\|begin\u258Cof\u258Cthinking\|>[\s\S]*?<\|end\u258Cof\u258Cthinking\|>/gi, "")
     .trim()
 
 const STRONG_DOC_FILES = [
@@ -228,7 +228,7 @@ const tui: TuiPlugin = async (api: TuiPluginApi, options?: PluginOptions) => {
       const language: Language = languageSetting === "auto" ? detectLanguage(raw) : languageSetting
       const project = includeContext ? getCachedContext(process.cwd()) : null
       const system = buildSystem(language, project, raw)
-      const userText = raw + "\n\n（请直接输出优化后的 prompt, 不要任何解释、标记或格式说明）"
+      const userText = raw + "\n\n\uff08\u8BF7\u76F4\u63A5\u8F93\u51FA\u4F18\u5316\u540E\u7684 prompt, \u4E0D\u8981\u4EFB\u4F55\u89E3\u91CA\u3001\u6807\u8BB0\u6216\u683C\u5F0F\u8BF4\u660E\uff09"
 
       console.error("[prompt-optimizer] run", {
         projectExists: project !== null,
@@ -243,7 +243,6 @@ const tui: TuiPlugin = async (api: TuiPluginApi, options?: PluginOptions) => {
         mode: "normal",
         parts: [resultPart],
       })
-      ref.focus()
       api.ui.toast({ variant: "success", message: TOAST.success })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -384,25 +383,179 @@ async function pollAssistantText(
   pollMs: number,
 ): Promise<string | undefined> {
   const deadline = Date.now() + timeoutMs
+  const DEBUG_FILE = "D:\\codes\\prompt-opt-debug.json"
+  let attemptCount = 0
 
   while (Date.now() < deadline) {
-    const resp = await api.client.session.messages({ sessionID })
-    const messages = (resp.data ?? []) as Array<any>
+    attemptCount++
+    const elapsed = Date.now() - (deadline - timeoutMs)
+    console.error(`[prompt-optimizer] poll attempt #${attemptCount} (elapsed ${elapsed}ms)`)
 
-    const assistant = messages.find((m) => m?.info?.role === "assistant")
-    if (assistant?.info?.time?.completed) {
-      const text = (assistant.parts ?? [])
-        .filter((p: any) => p?.type === "text" && typeof p.text === "string")
-        .map((p: any) => p.text as string)
-        .join("")
+    try {
+      // Use api.client.session.messages with { sessionID }
+      const resp = await api.client.session.messages({ sessionID })
+      console.error("[prompt-optimizer] resp type:", typeof resp)
 
-      const cleaned = stripThinkBlocks(text)
-      if (cleaned.length > 0) return cleaned
+      // Write full raw response to debug file
+      try {
+        writeFileSync(DEBUG_FILE, JSON.stringify(resp, null, 2), "utf-8")
+        console.error("[prompt-optimizer] wrote raw response to", DEBUG_FILE)
+      } catch (e) {
+        console.error("[prompt-optimizer] debug file write failed:", String(e))
+      }
+
+      // Log resp top-level shape
+      const respAny = resp as any
+      console.error("[prompt-optimizer] resp keys:", Object.keys(respAny))
+      if (respAny.data !== undefined) {
+        const d = respAny.data
+        console.error("[prompt-optimizer] resp.data type:", typeof d, Array.isArray(d) ? "Array" : "not Array")
+        if (!Array.isArray(d) && typeof d === "object" && d !== null) {
+          console.error("[prompt-optimizer] resp.data keys:", Object.keys(d))
+          if (d.data !== undefined) {
+            console.error("[prompt-optimizer] resp.data.data type:", typeof d.data, Array.isArray(d.data) ? "Array" : typeof d.data)
+          }
+        }
+      }
+
+      // --- Attempt all possible paths to find messages array ---
+      const paths = [
+        { label: "resp.data.data", val: respAny?.data?.data },
+        { label: "resp.data", val: respAny?.data },
+      ]
+
+      let messages: unknown[] | undefined
+      for (const p of paths) {
+        if (Array.isArray(p.val)) {
+          console.error(`[prompt-optimizer] ✅ messages array found at "${p.label}" length=${p.val.length}`)
+          messages = p.val
+          break
+        }
+        console.error(`[prompt-optimizer] ❌ "${p.label}" not an array:`, typeof p.val)
+      }
+
+      if (!messages) {
+        console.error("[prompt-optimizer] no messages array yet, retrying...")
+        await new Promise((r) => setTimeout(r, pollMs))
+        continue
+      }
+
+      // Log every message in the array
+      messages.forEach((m: any, i: number) => {
+        console.error(`[prompt-optimizer] msg[${i}] id=${m.id} type=${m.type} role=${m.role} keys=${Object.keys(m).join(",")}`)
+      })
+
+      // Find the first completed assistant message
+      for (const m of messages) {
+        const mAny = m as any
+
+        // Check all possible assistant role indicators
+        const roleChecks = [
+          { label: "m.type === 'assistant'", val: mAny.type === "assistant" },
+          { label: "m.role === 'assistant'", val: mAny.role === "assistant" },
+          { label: "m.info?.role === 'assistant'", val: mAny.info?.role === "assistant" },
+        ]
+        const isAssistant = roleChecks.some((c) => c.val)
+        for (const c of roleChecks) {
+          console.error(`[prompt-optimizer]   role check "${c.label}": ${c.val}`)
+        }
+
+        if (!isAssistant) {
+          console.error("[prompt-optimizer]   skipping: not an assistant message")
+          continue
+        }
+
+        // Check all possible time completed indicators
+        const timeCompleted = mAny.time?.completed
+        const infoTimeCompleted = mAny.info?.time?.completed
+        const hasCompleted = !!(timeCompleted ?? infoTimeCompleted)
+        console.error(`[prompt-optimizer]   time.completed=${timeCompleted} info.time.completed=${infoTimeCompleted} hasCompleted=${hasCompleted}`)
+
+        if (!hasCompleted) {
+          console.error("[prompt-optimizer]   skipping: not completed yet")
+          continue
+        }
+
+        console.error(`[prompt-optimizer] ✅ found completed assistant message id=${mAny.id}`)
+
+        // --- Extract text content: try all possible sources ---
+        let text = ""
+
+        // Source 1: m.content (array of { type: "text", text: string })
+        if (Array.isArray(mAny.content)) {
+          console.error(`[prompt-optimizer]   m.content array length=${mAny.content.length}`)
+          for (const part of mAny.content) {
+            console.error(`[prompt-optimizer]     content part:`, JSON.stringify(part))
+            if (part?.type === "text" && typeof part?.text === "string") {
+              text += part.text
+            }
+          }
+          if (text) console.error(`[prompt-optimizer]   ✅ text from m.content, length=${text.length}`)
+        } else {
+          console.error(`[prompt-optimizer]   m.content not array:`, typeof mAny.content)
+        }
+
+        // Source 2: m.parts (array of { type: "text", text: string })
+        if (!text && Array.isArray(mAny.parts)) {
+          console.error(`[prompt-optimizer]   m.parts array length=${mAny.parts.length}`)
+          for (const part of mAny.parts) {
+            console.error(`[prompt-optimizer]     parts item:`, JSON.stringify(part))
+            if (part?.type === "text" && typeof part?.text === "string") {
+              text += part.text
+            }
+          }
+          if (text) console.error(`[prompt-optimizer]   ✅ text from m.parts, length=${text.length}`)
+        } else if (!text) {
+          console.error(`[prompt-optimizer]   m.parts not array:`, typeof mAny.parts)
+        }
+
+        // Source 3: api.state.part(m.id) as fallback
+        if (!text) {
+          console.error(`[prompt-optimizer]   trying api.state.part(${mAny.id}) as fallback...`)
+          try {
+            const parts = api.state.part(mAny.id)
+            console.error(`[prompt-optimizer]   api.state.part result:`, JSON.stringify(parts))
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                const p = part as any
+                if (p?.type === "text" && typeof p?.text === "string") {
+                  text += p.text
+                }
+              }
+            }
+            if (text) console.error(`[prompt-optimizer]   ✅ text from api.state.part, length=${text.length}`)
+          } catch (e) {
+            console.error(`[prompt-optimizer]   api.state.part error:`, String(e))
+          }
+        }
+
+        const cleaned = stripThinkBlocks(text).trim()
+        console.error(`[prompt-optimizer]   raw text length=${text.length} cleaned length=${cleaned.length}`)
+
+        if (cleaned.length > 0) {
+          // Write final result to debug file
+          try {
+            const resultPayload = { text: cleaned, id: mAny.id, sessionID }
+            writeFileSync(
+              DEBUG_FILE.replace(".json", "-result.json"),
+              JSON.stringify(resultPayload, null, 2),
+              "utf-8",
+            )
+          } catch { /* ignore */ }
+          return cleaned
+        }
+      }
+
+      console.error("[prompt-optimizer] no completed assistant with content yet, retrying...")
+    } catch (err) {
+      console.error("[prompt-optimizer] poll fetch error:", err instanceof Error ? err.message : String(err))
+      console.error("[prompt-optimizer] full poll error:", err)
     }
 
     await new Promise((r) => setTimeout(r, pollMs))
   }
 
+  console.error(`[prompt-optimizer] TIMEOUT after ${timeoutMs}ms`)
   return undefined
 }
 
