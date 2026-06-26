@@ -1,6 +1,6 @@
 {
   "name": "opencode-prompt-optimizer",
-  "version": "0.3.7-debug.0",
+  "version": "0.3.8",
   "description": "One-click prompt optimizer for OpenCode TUI. Expands brief requests into directly-executable task specs.",
   "type": "module",
   "exports": {
